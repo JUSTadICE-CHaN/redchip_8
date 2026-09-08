@@ -21,6 +21,8 @@ impl Cpu {
         }
     }
 
+    pub fn load_program(&mut self, program: &[u8]) {}
+
     fn fetch(&mut self) -> u16 {
         let high_byte: u8 = self.memory[self.pc as usize];
         let low_byte: u8 = self.memory[(self.pc + 1) as usize];
@@ -37,11 +39,27 @@ impl Cpu {
         (opcode & 0x00FF) as u8
     }
 
-    fn execute_load(&mut self, opcode: u16) {
+    fn instruction_type(opcode: u16) -> u8 {
+        ((opcode & 0xF000) >> 12) as u8
+    }
+
+    fn execute(&mut self, opcode: u16) {
+        let instruction_type = Self::instruction_type(opcode);
         let register = Self::register_index(opcode);
         let byte = Self::immediate_byte(opcode);
 
-        self.registers[register] = byte;
+        match instruction_type {
+            // Load Immediate Instruction
+            0x6 => self.registers[register] = byte,
+            // Add Immediate Instruction
+            0x7 => self.registers[register] = self.registers[register].wrapping_add(byte),
+            _ => (),
+        }
+    }
+
+    fn cycle(&mut self) {
+        let opcode = self.fetch();
+        self.execute(opcode);
     }
 }
 
@@ -68,11 +86,49 @@ mod tests {
     }
 
     #[test]
+    fn correct_instruction_type() {
+        assert_eq!(Cpu::instruction_type(0x6A42), 0x6);
+    }
+
+    #[test]
     fn load_immediate_into_register() {
         let mut cpu = Cpu::new();
 
-        cpu.execute_load(0x6A42);
+        cpu.execute(0x6A42);
 
         assert_eq!(cpu.registers[10], 0x42);
+    }
+
+    #[test]
+    fn add_immediate_into_register() {
+        let mut cpu = Cpu::new();
+
+        cpu.execute(0x7A03);
+        cpu.execute(0x7A07);
+
+        assert_eq!(cpu.registers[10], 0xA);
+    }
+
+    #[test]
+    fn add_immediate_into_register_overflow() {
+        let mut cpu = Cpu::new();
+
+        cpu.execute(0x7AFF);
+        cpu.execute(0x7A07);
+
+        assert_eq!(cpu.registers[10], 0x6);
+    }
+
+    #[test]
+    fn cycle_fetches_and_executes() {
+        let mut cpu = Cpu::new();
+
+        cpu.memory[0x200] = 0x6A;
+        cpu.memory[0x201] = 0x42;
+
+        cpu.cycle();
+
+        assert_eq!(cpu.registers[10], 0x42);
+        assert_eq!(cpu.pc, 0x202);
     }
 }
