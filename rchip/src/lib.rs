@@ -21,7 +21,14 @@ impl Cpu {
         }
     }
 
-    pub fn load_program(&mut self, program: &[u8]) {}
+    pub fn load_program(&mut self, program: &[u8]) {
+        //Variable that defines the first free starting memory address: 0x200
+        let program_start = 0x200;
+
+        for byte_index in 0..program.len() {
+            self.memory[program_start + byte_index] = program[byte_index];
+        }
+    }
 
     fn fetch(&mut self) -> u16 {
         let high_byte: u8 = self.memory[self.pc as usize];
@@ -130,5 +137,30 @@ mod tests {
 
         assert_eq!(cpu.registers[10], 0x42);
         assert_eq!(cpu.pc, 0x202);
+    }
+
+    #[test]
+    fn load_small_program() {
+        let mut cpu = Cpu::new();
+
+        cpu.load_program(&[0x6A, 0x42, 0x7A, 0x05]);
+
+        assert_eq!(cpu.memory[0x200], 0x6A);
+        assert_eq!(cpu.memory[0x201], 0x42);
+        assert_eq!(cpu.memory[0x202], 0x7A);
+        assert_eq!(cpu.memory[0x203], 0x05);
+    }
+
+    #[test]
+    fn execute_small_program() {
+        let mut cpu = Cpu::new();
+
+        cpu.load_program(&[0x6A, 0x42, 0x7A, 0x05]);
+
+        cpu.cycle();
+        cpu.cycle();
+
+        assert_eq!(cpu.registers[10], 0x47);
+        assert_eq!(cpu.pc, 0x204);
     }
 }
