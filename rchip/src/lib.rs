@@ -38,28 +38,64 @@ impl Cpu {
         ((high_byte as u16) << 8) | (low_byte as u16)
     }
 
+    /// Returns register index from opcode
     fn register_index(opcode: u16) -> usize {
         ((opcode & 0x0F00) >> 8) as usize
     }
 
+    /// Returns immediate byte from opcode
     fn immediate_byte(opcode: u16) -> u8 {
         (opcode & 0x00FF) as u8
     }
 
+    /// Returns instruction type in hexadecimal from opcode
     fn instruction_type(opcode: u16) -> u8 {
         ((opcode & 0xF000) >> 12) as u8
     }
 
+    /// Returns immediate address from opcode
+    fn immediate_address(opcode: u16) -> u16 {
+        opcode & 0x0FFF
+    }
+
     fn execute(&mut self, opcode: u16) {
         let instruction_type = Self::instruction_type(opcode);
-        let register = Self::register_index(opcode);
-        let byte = Self::immediate_byte(opcode);
+
+        match opcode {
+            // Return from Call (branch) instruction)
+            0x00EE => {
+                // Decrement stack pointer
+                self.sp -= 1;
+                // Pop address from stack into program counter
+                self.pc = self.stack[self.sp as usize];
+                return;
+            }
+            _ => (),
+        }
 
         match instruction_type {
+            // Call (branch) Instruction
+            0x2 => {
+                let address = Self::immediate_address(opcode);
+                // First store current program counter address into stack
+                self.stack[self.sp as usize] = self.pc;
+                // Increment stack pointer
+                self.sp += 1;
+                // Change program counter to new call (branch) address
+                self.pc = address;
+            }
             // Load Immediate Instruction
-            0x6 => self.registers[register] = byte,
+            0x6 => {
+                let register = Self::register_index(opcode);
+                let byte = Self::immediate_byte(opcode);
+                self.registers[register] = byte
+            }
             // Add Immediate Instruction
-            0x7 => self.registers[register] = self.registers[register].wrapping_add(byte),
+            0x7 => {
+                let register = Self::register_index(opcode);
+                let byte = Self::immediate_byte(opcode);
+                self.registers[register] = self.registers[register].wrapping_add(byte)
+            }
             _ => (),
         }
     }
@@ -161,6 +197,42 @@ mod tests {
         cpu.cycle();
 
         assert_eq!(cpu.registers[10], 0x47);
+        assert_eq!(cpu.pc, 0x204);
+    }
+
+    #[test]
+    fn call_address() {
+        let mut cpu = Cpu::new();
+
+        cpu.load_program(&[0x22, 0x04, 0x7A, 0x05, 0x6A, 0x42]);
+
+        cpu.cycle();
+
+        assert_eq!(cpu.stack[0], 0x202);
+        assert_eq!(cpu.sp, 1);
+        assert_eq!(cpu.pc, 0x204);
+    }
+
+    #[test]
+    fn call_address_and_return() {
+        let mut cpu = Cpu::new();
+
+        cpu.load_program(&[0x22, 0x04, 0x6A, 0x42, 0x7A, 0x05, 0x00, 0xEE]);
+
+        // The following program should initially add 0x5 into Register 10
+        // But since the return brings it back to an immediate load, the final
+        // result should be a 0x42 not a 0x47.
+        // 0x204
+        cpu.cycle();
+        // 0x206
+        cpu.cycle();
+        // 0x202
+        cpu.cycle();
+        //0x204
+        cpu.cycle();
+
+        assert_eq!(cpu.registers[10], 0x42);
+        assert_eq!(cpu.sp, 0);
         assert_eq!(cpu.pc, 0x204);
     }
 }
