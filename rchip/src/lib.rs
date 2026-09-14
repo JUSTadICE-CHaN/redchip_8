@@ -74,9 +74,7 @@ impl Cpu {
 
         match opcode {
             // Clear Display Instruction
-            0x00E0 => {
-                let test = 5;
-            }
+            0x00E0 => self.display.clear(),
             // Return from Call (branch) instruction)
             0x00EE => {
                 // Decrement stack pointer
@@ -166,6 +164,13 @@ impl Cpu {
                 let data = Self::immediate_12bit_data(opcode);
 
                 self.i = data;
+            }
+            // Jump instruction (NNN + V0)
+            0xB => {
+                let data = Self::immediate_12bit_data(opcode);
+                let final_address = data.wrapping_add(self.registers[0] as u16);
+
+                self.pc = data;
             }
             // Random and with byte into register
             0xC => {
@@ -708,5 +713,25 @@ mod tests {
         assert!(!cpu.display.get_pixel(11, 7));
 
         assert_eq!(cpu.registers[0xF], 1);
+    }
+
+    #[test]
+    fn clear_display() {
+        let mut cpu = Cpu::new();
+
+        cpu.memory[0x50] = 0x50;
+
+        cpu.i = 0x50;
+
+        cpu.registers[0xA] = 0x8;
+        cpu.registers[0xB] = 0x5;
+
+        cpu.execute(0xDAB3);
+        assert!(cpu.display.get_pixel(9, 5));
+        assert!(cpu.display.get_pixel(11, 5));
+
+        cpu.execute(0x00E0);
+        assert!(!cpu.display.get_pixel(9, 5));
+        assert!(!cpu.display.get_pixel(11, 5));
     }
 }
