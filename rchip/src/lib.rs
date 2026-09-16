@@ -1,5 +1,7 @@
 mod display;
+mod keypad;
 use display::Display;
+use keypad::Keypad;
 
 pub struct Cpu {
     memory: [u8; 4096],
@@ -11,6 +13,7 @@ pub struct Cpu {
     delay_timer: u8,
     sound_timer: u8,
     display: Display,
+    keypad: Keypad,
 }
 
 impl Cpu {
@@ -25,6 +28,7 @@ impl Cpu {
             delay_timer: 0u8,
             sound_timer: 0u8,
             display: Display::new(),
+            keypad: Keypad::new(),
         }
     }
 
@@ -170,7 +174,7 @@ impl Cpu {
                 let data = Self::immediate_12bit_data(opcode);
                 let final_address = data.wrapping_add(self.registers[0] as u16);
 
-                self.pc = data;
+                self.pc = final_address;
             }
             // Random and with byte into register
             0xC => {
@@ -197,6 +201,28 @@ impl Cpu {
                 } else {
                     0
                 };
+            }
+            // Input instructions
+            0xE => self.keyboard_functions(opcode),
+            _ => (),
+        }
+    }
+
+    fn keyboard_functions(&mut self, opcode: u16) {
+        let function = opcode & 0x00FF;
+
+        match function {
+            0x9E => {
+                let key = self.registers[Self::register_index(opcode)];
+                if self.keypad.is_pressed(key as usize) {
+                    self.pc += 2;
+                }
+            }
+            0xA1 => {
+                let key = self.registers[Self::register_index(opcode)];
+                if !self.keypad.is_pressed(key as usize) {
+                    self.pc += 2;
+                }
             }
             _ => (),
         }
@@ -665,6 +691,26 @@ mod tests {
     }
 
     #[test]
+    fn jump_to_address_plus_v0() {
+        let mut cpu = Cpu::new();
+
+        cpu.registers[0] = 0x10;
+
+        cpu.memory[0x200] = 0xB3;
+        cpu.memory[0x201] = 0x00;
+        cpu.memory[0x300] = 0x6A;
+        cpu.memory[0x301] = 0x42;
+        cpu.memory[0x310] = 0x6A;
+        cpu.memory[0x311] = 0x40;
+
+        cpu.cycle();
+        cpu.cycle();
+
+        assert_eq!(cpu.registers[0xA], 0x40);
+        assert_eq!(cpu.pc, 0x312);
+    }
+
+    #[test]
     // This is pointless lol
     fn random_and_with_immediate() {
         let mut cpu = Cpu::new();
@@ -733,5 +779,38 @@ mod tests {
         cpu.execute(0x00E0);
         assert!(!cpu.display.get_pixel(9, 5));
         assert!(!cpu.display.get_pixel(11, 5));
+    }
+
+    #[test]
+    fn input_branch() {
+        let mut cpu = Cpu::new();
+
+        cpu.registers[0] = 0xA;
+        cpu.keypad.set_key(0xA, true);
+
+        assert!(cpu.keypad.is_pressed(0xA));
+
+        cpu.load_program(&[
+            0x6A, 0x42, 0x6B, 0x42, 0xE0, 0x9E, 0x69, 0x40, 0x6A, 0x45, 0xE0, 0xA1, 0x6B, 0x32,
+        ]);
+
+        // Load 42 in registers A and B
+        cpu.cycle();
+        cpu.cycle();
+
+        // Execute conditional register execution should skip to 0x6A, 0x45
+        cpu.cycle();
+
+        assert_eq!(cpu.pc, 0x208);
+
+        // Move 45 into register A then compare register A (45) and B (42)
+        cpu.cycle();
+        cpu.cycle();
+
+        // Shouldn't skip so register B should have 32 loaded into it
+        cpu.cycle();
+
+        assert_eq!(cpu.registers[11], 0x32);
+        assert_eq!(cpu.pc, 0x20E);
     }
 }
