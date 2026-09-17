@@ -204,6 +204,43 @@ impl Cpu {
             }
             // Input instructions
             0xE => self.keyboard_functions(opcode),
+            // Timer/Utility related instructions
+            0xF => self.timer_and_utility_functions(opcode),
+            _ => (),
+        }
+    }
+
+    fn timer_and_utility_functions(&mut self, opcode: u16) {
+        let function = opcode & 0x00FF;
+
+        match function {
+            0x07 => {
+                let register = Self::register_index(opcode);
+
+                self.registers[register] = self.delay_timer;
+            }
+            0x15 => {
+                let register = Self::register_index(opcode);
+
+                self.delay_timer = self.registers[register];
+            }
+            0x18 => {
+                let register = Self::register_index(opcode);
+
+                self.sound_timer = self.registers[register];
+            }
+            0x1E => {
+                let register = Self::register_index(opcode);
+                let data = self.registers[register];
+
+                self.i = self.i.wrapping_add(data as u16);
+            }
+            0x29 => {
+                let register = Self::register_index(opcode);
+                let data = self.registers[register];
+
+                self.i = 0x200;
+            }
             _ => (),
         }
     }
@@ -812,5 +849,57 @@ mod tests {
 
         assert_eq!(cpu.registers[11], 0x32);
         assert_eq!(cpu.pc, 0x20E);
+    }
+
+    #[test]
+    fn set_register_to_delay_timer() {
+        let mut cpu = Cpu::new();
+
+        cpu.delay_timer = 120;
+
+        cpu.execute(0xF207);
+
+        assert_eq!(cpu.registers[0x2], 120);
+    }
+
+    #[test]
+    fn set_delay_timer_to_register_value() {
+        let mut cpu = Cpu::new();
+
+        cpu.registers[0x2] = 120;
+
+        cpu.execute(0xF215);
+
+        assert_eq!(cpu.delay_timer, 120);
+    }
+
+    #[test]
+    fn set_sound_timer_to_register_value() {
+        let mut cpu = Cpu::new();
+
+        cpu.registers[0x2] = 120;
+
+        cpu.execute(0xF218);
+
+        assert_eq!(cpu.sound_timer, 120);
+    }
+
+    #[test]
+    fn add_register_into_i() {
+        let mut cpu = Cpu::new();
+
+        cpu.registers[0x2] = 0x20;
+        cpu.i = 0x300;
+
+        cpu.execute(0xF21E);
+
+        assert_eq!(cpu.i, 0x320);
+
+        cpu.registers[0x2] = 0x1;
+        cpu.i = 0xFFFF;
+
+        cpu.execute(0xF21E);
+
+        assert_eq!(cpu.i, 0);
     }
 }
