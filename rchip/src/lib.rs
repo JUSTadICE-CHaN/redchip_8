@@ -3,6 +3,25 @@ mod keypad;
 use display::Display;
 use keypad::Keypad;
 
+const FONTSET: [u8; 80] = [
+    0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
+    0x20, 0x60, 0x20, 0x20, 0x70, // 1
+    0xF0, 0x10, 0xF0, 0x80, 0xF0, // 2
+    0xF0, 0x10, 0xF0, 0x10, 0xF0, // 3
+    0x90, 0x90, 0xF0, 0x10, 0x10, // 4
+    0xF0, 0x80, 0xF0, 0x10, 0xF0, // 5
+    0xF0, 0x80, 0xF0, 0x90, 0xF0, // 6
+    0xF0, 0x10, 0x20, 0x40, 0x40, // 7
+    0xF0, 0x90, 0xF0, 0x90, 0xF0, // 8
+    0xF0, 0x90, 0xF0, 0x10, 0xF0, // 9
+    0xF0, 0x90, 0xF0, 0x90, 0x90, // A
+    0xE0, 0x90, 0xE0, 0x90, 0xE0, // B
+    0xF0, 0x80, 0x80, 0x80, 0xF0, // C
+    0xE0, 0x90, 0x90, 0x90, 0xE0, // D
+    0xF0, 0x80, 0xF0, 0x80, 0xF0, // E
+    0xF0, 0x80, 0xF0, 0x80, 0x80, // F
+];
+
 pub struct Cpu {
     memory: [u8; 4096],
     registers: [u8; 16],
@@ -18,8 +37,11 @@ pub struct Cpu {
 
 impl Cpu {
     pub fn new() -> Cpu {
+        let mut raw_memory = [0u8; 4096];
+        Self::load_data(&mut raw_memory, &FONTSET, 0x50);
+
         Self {
-            memory: [0u8; 4096],
+            memory: raw_memory,
             registers: [0u8; 16],
             i: 0,
             pc: 0x200,
@@ -32,13 +54,27 @@ impl Cpu {
         }
     }
 
-    pub fn load_program(&mut self, program: &[u8]) {
+    pub fn load_data(memory: &mut [u8; 4096], data: &[u8], start: usize) {
+        let program_start = start;
+
+        for byte_index in 0..data.len() {
+            memory[program_start + byte_index] = data[byte_index];
+        }
+    }
+
+    pub fn load_program(&mut self, program: &[u8]) -> Result<(), String> {
         //Variable that defines the first free starting memory address: 0x200
         let program_start = 0x200;
+
+        if program.len() > 0xE00 {
+            return Err("Program is too large!".to_string());
+        }
 
         for byte_index in 0..program.len() {
             self.memory[program_start + byte_index] = program[byte_index];
         }
+
+        Ok(())
     }
 
     fn fetch(&mut self) -> u16 {
@@ -73,7 +109,7 @@ impl Cpu {
         opcode & 0x0FFF
     }
 
-    fn execute(&mut self, opcode: u16) {
+    fn execute(&mut self, opcode: u16) -> Result<(), String> {
         let instruction_type = Self::instruction_type(opcode);
 
         match opcode {
@@ -85,7 +121,7 @@ impl Cpu {
                 self.sp -= 1;
                 // Pop address from stack into program counter
                 self.pc = self.stack[self.sp as usize];
-                return;
+                return Ok(());
             }
             _ => (),
         }
@@ -128,7 +164,7 @@ impl Cpu {
             // Conditional if register_x == register_y then skip instruction
             0x5 => {
                 if (opcode & 0x000F) != 0 {
-                    return;
+                    return Ok(());
                 }
                 let register_x = Self::register_index(opcode);
                 let register_y = Self::second_register_index(opcode);
@@ -154,7 +190,7 @@ impl Cpu {
             // Conditional if register_x != register_y then skip instruction
             0x9 => {
                 if (opcode & 0x000F) != 0 {
-                    return;
+                    return Ok(());
                 }
                 let register_x = Self::register_index(opcode);
                 let register_y = Self::second_register_index(opcode);
@@ -193,6 +229,10 @@ impl Cpu {
                 let y_coord = self.registers[register_y] as usize;
                 let number_of_rows = opcode & 0x000F;
 
+                if (self.i + number_of_rows) > 0x1000 {
+                    return Err("0xDXYN: Out of bounds memory address".to_string());
+                }
+
                 let sprite_data: &[u8] =
                     &self.memory[(self.i as usize)..(self.i as usize + number_of_rows as usize)];
 
@@ -205,12 +245,14 @@ impl Cpu {
             // Input instructions
             0xE => self.keyboard_functions(opcode),
             // Timer/Utility related instructions
-            0xF => self.timer_and_utility_functions(opcode),
+            0xF => self.timer_and_utility_functions(opcode)?,
             _ => (),
         }
+
+        Ok(())
     }
 
-    fn timer_and_utility_functions(&mut self, opcode: u16) {
+    fn timer_and_utility_functions(&mut self, opcode: u16) -> Result<(), String> {
         let function = opcode & 0x00FF;
 
         match function {
@@ -218,6 +260,18 @@ impl Cpu {
                 let register = Self::register_index(opcode);
 
                 self.registers[register] = self.delay_timer;
+            }
+            // Wait for key to be pressed before continuing and then save the key to a register
+            0x0A => {
+                let register = Self::register_index(opcode);
+                match self.keypad.get_pressed_key() {
+                    None => {
+                        self.pc -= 2;
+                    }
+                    Some(key) => {
+                        self.registers[register] = key as u8;
+                    }
+                }
             }
             0x15 => {
                 let register = Self::register_index(opcode);
@@ -239,10 +293,57 @@ impl Cpu {
                 let register = Self::register_index(opcode);
                 let data = self.registers[register];
 
-                self.i = 0x200;
+                self.i = 0x50 + (data as u16 * 5);
+            }
+            // BCD to memory
+            0x33 => {
+                let register = Self::register_index(opcode);
+                // This data could contain a 3 digit number like 123
+                let data = self.registers[register];
+                // This makes it so that we only have the tens and ones like 23 instead of 123.
+                let tens_and_ones = data % 100;
+
+                let hundreds = data / 100;
+                let tens = tens_and_ones / 10;
+                // Gives us ones, like 3
+                let ones = tens_and_ones % 10;
+
+                if (self.i + 3) > 0x1000 {
+                    return Err("0xFX33: Out of bounds memory address".to_string());
+                }
+
+                self.memory[self.i as usize] = hundreds;
+                self.memory[self.i as usize + 1] = tens;
+                self.memory[self.i as usize + 2] = ones;
+            }
+            // Store registers up to X into memory starting from address i
+            0x55 => {
+                let register = Self::register_index(opcode);
+
+                if (self.i + register as u16 + 1) > 0x1000 {
+                    return Err("0xFX55: Out of bounds memory address".to_string());
+                }
+
+                for index in 0..=register {
+                    self.memory[self.i as usize + index] = self.registers[index];
+                }
+            }
+            // Load registers up to X into memory starting from address i
+            0x65 => {
+                let register = Self::register_index(opcode);
+
+                if (self.i + register as u16 + 1) > 0x1000 {
+                    return Err("0xFX65: Out of bounds memory address".to_string());
+                }
+
+                for index in 0..=register {
+                    self.registers[index] = self.memory[self.i as usize + index];
+                }
             }
             _ => (),
         }
+
+        Ok(())
     }
 
     fn keyboard_functions(&mut self, opcode: u16) {
@@ -352,6 +453,16 @@ impl Cpu {
         let opcode = self.fetch();
         self.execute(opcode);
     }
+
+    fn timer_tick(&mut self) {
+        if self.delay_timer > 0 {
+            self.delay_timer -= 1;
+        }
+
+        if self.sound_timer > 0 {
+            self.sound_timer -= 1;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -427,12 +538,34 @@ mod tests {
     fn load_small_program() {
         let mut cpu = Cpu::new();
 
-        cpu.load_program(&[0x6A, 0x42, 0x7A, 0x05]);
+        cpu.load_program(&[0x6A, 0x42, 0x7A, 0x05]).unwrap();
 
         assert_eq!(cpu.memory[0x200], 0x6A);
         assert_eq!(cpu.memory[0x201], 0x42);
         assert_eq!(cpu.memory[0x202], 0x7A);
         assert_eq!(cpu.memory[0x203], 0x05);
+    }
+
+    #[test]
+    fn load_full_program() {
+        let mut cpu = Cpu::new();
+        let mut full_program = [0xAA; 0xE00];
+        full_program[0xDFF] = 0xFF;
+
+        cpu.load_program(&full_program).unwrap();
+
+        assert_eq!(cpu.memory[0xFFF], 0xFF);
+    }
+
+    #[test]
+    fn load_too_big_program() {
+        let mut cpu = Cpu::new();
+        let mut full_program = [0xAA; 0xE01];
+        full_program[0xDFF] = 0xFF;
+
+        let result = cpu.load_program(&full_program);
+
+        assert_eq!(result.unwrap_err(), "Program is too large!".to_string());
     }
 
     #[test]
@@ -799,6 +932,32 @@ mod tests {
     }
 
     #[test]
+    fn draw_sprite_instruction_out_of_bounds() {
+        let mut cpu = Cpu::new();
+
+        cpu.memory[0xFFF] = 0x50;
+
+        cpu.i = 0xFFF;
+
+        cpu.registers[0xA] = 0x8;
+        cpu.registers[0xB] = 0x5;
+
+        cpu.execute(0xDAB1);
+
+        assert!(cpu.display.get_pixel(9, 5));
+        assert!(cpu.display.get_pixel(11, 5));
+
+        assert_eq!(cpu.registers[0xF], 0);
+
+        let result = cpu.execute(0xDAB2);
+
+        assert_eq!(
+            result.unwrap_err(),
+            "0xDXYN: Out of bounds memory address".to_string()
+        );
+    }
+
+    #[test]
     fn clear_display() {
         let mut cpu = Cpu::new();
 
@@ -901,5 +1060,139 @@ mod tests {
         cpu.execute(0xF21E);
 
         assert_eq!(cpu.i, 0);
+    }
+
+    #[test]
+    fn font_address_into_i() {
+        let mut cpu = Cpu::new();
+
+        cpu.registers[0x3] = 0xF;
+        cpu.execute(0xF329);
+
+        assert_eq!(cpu.i, 0x9B);
+    }
+
+    #[test]
+    fn wait_for_pressed_key() {
+        let mut cpu = Cpu::new();
+
+        cpu.registers[0x3] = 0xF;
+        cpu.load_program(&[0xF3, 0x0A]);
+        cpu.cycle();
+
+        assert_eq!(cpu.pc, 0x200);
+        assert_eq!(cpu.registers[0x3], 0xF);
+
+        cpu.keypad.set_key(0xA, true);
+        cpu.cycle();
+
+        assert_eq!(cpu.pc, 0x202);
+        assert_eq!(cpu.registers[0x3], 0xA);
+    }
+
+    #[test]
+    fn test_bcd() {
+        let mut cpu = Cpu::new();
+
+        cpu.registers[0x3] = 172;
+        cpu.i = 0x300;
+
+        cpu.execute(0xF333);
+
+        assert_eq!(cpu.memory[0x300], 1);
+        assert_eq!(cpu.memory[0x301], 7);
+        assert_eq!(cpu.memory[0x302], 2);
+
+        cpu.registers[0x3] = 172;
+        cpu.i = 0xFFE;
+
+        let result = cpu.execute(0xF333);
+
+        assert_eq!(
+            result.unwrap_err(),
+            "0xFX33: Out of bounds memory address".to_string()
+        );
+    }
+
+    #[test]
+    fn store_registers_till_x_into_memory() {
+        let mut cpu = Cpu::new();
+
+        cpu.registers[0] = 0x12;
+        cpu.registers[1] = 0x34;
+        cpu.registers[2] = 0x56;
+        cpu.i = 0x300;
+
+        cpu.execute(0xF255);
+
+        assert_eq!(cpu.memory[cpu.i as usize], 0x12);
+        assert_eq!(cpu.memory[cpu.i as usize + 1], 0x34);
+        assert_eq!(cpu.memory[cpu.i as usize + 2], 0x56);
+
+        cpu.i = 0xFFE;
+        let result = cpu.execute(0xF255);
+
+        assert_eq!(
+            result.unwrap_err(),
+            "0xFX55: Out of bounds memory address".to_string()
+        );
+    }
+
+    #[test]
+    fn load_registers_till_x_into_memory() {
+        let mut cpu = Cpu::new();
+
+        cpu.i = 0x300;
+
+        cpu.memory[0x300] = 0x12;
+        cpu.memory[0x301] = 0x34;
+        cpu.memory[0x302] = 0x56;
+
+        cpu.execute(0xF265);
+
+        assert_eq!(cpu.registers[0], 0x12);
+        assert_eq!(cpu.registers[1], 0x34);
+        assert_eq!(cpu.registers[2], 0x56);
+
+        cpu.i = 0xFFE;
+        let result = cpu.execute(0xF265);
+
+        assert_eq!(
+            result.unwrap_err(),
+            "0xFX65: Out of bounds memory address".to_string()
+        );
+    }
+
+    #[test]
+    fn fontset_loaded_into_memory() {
+        let cpu = Cpu::new();
+
+        assert_eq!(cpu.memory[0x50], 0xF0);
+        assert_eq!(cpu.memory[0x51], 0x90);
+        assert_eq!(cpu.memory[0x54], 0xF0);
+
+        // First byte of the F sprite
+        assert_eq!(cpu.memory[0x9B], 0xF0);
+    }
+
+    #[test]
+    fn check_timer_tick() {
+        let mut cpu = Cpu::new();
+
+        cpu.delay_timer = 5;
+        cpu.sound_timer = 3;
+
+        cpu.timer_tick();
+
+        assert_eq!(cpu.delay_timer, 4);
+        assert_eq!(cpu.sound_timer, 2);
+
+        cpu.delay_timer = 0;
+        cpu.sound_timer = 0;
+
+        cpu.timer_tick();
+
+        assert_eq!(cpu.delay_timer, 0);
+        assert_eq!(cpu.sound_timer, 0);
     }
 }
