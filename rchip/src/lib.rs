@@ -35,6 +35,12 @@ pub struct Cpu {
     keypad: Keypad,
 }
 
+impl Default for Cpu {
+    fn default() -> Self {
+        Cpu::new()
+    }
+}
+
 impl Cpu {
     pub fn new() -> Cpu {
         let mut raw_memory = [0u8; 4096];
@@ -57,9 +63,7 @@ impl Cpu {
     pub fn load_data(memory: &mut [u8; 4096], data: &[u8], start: usize) {
         let program_start = start;
 
-        for byte_index in 0..data.len() {
-            memory[program_start + byte_index] = data[byte_index];
-        }
+        memory[program_start..(program_start + data.len())].clone_from_slice(data);
     }
 
     pub fn load_program(&mut self, program: &[u8]) -> Result<(), String> {
@@ -70,19 +74,21 @@ impl Cpu {
             return Err("Program is too large!".to_string());
         }
 
-        for byte_index in 0..program.len() {
-            self.memory[program_start + byte_index] = program[byte_index];
-        }
+        self.memory[program_start..(program_start + program.len())].clone_from_slice(program);
 
         Ok(())
     }
 
-    fn fetch(&mut self) -> u16 {
+    fn fetch(&mut self) -> Result<u16, String> {
+        if self.pc >= 0xFFF {
+            return Err("Out of bounds memory fetch!".to_string());
+        }
+
         let high_byte: u8 = self.memory[self.pc as usize];
         let low_byte: u8 = self.memory[(self.pc + 1) as usize];
         self.pc += 2;
 
-        ((high_byte as u16) << 8) | (low_byte as u16)
+        return Ok(((high_byte as u16) << 8) | (low_byte as u16));
     }
 
     /// Returns register index from opcode
@@ -114,9 +120,15 @@ impl Cpu {
 
         match opcode {
             // Clear Display Instruction
-            0x00E0 => self.display.clear(),
+            0x00E0 => {
+                self.display.clear();
+                return Ok(());
+            }
             // Return from Call (branch) instruction)
             0x00EE => {
+                if self.sp == 0 {
+                    return Err("0x00EE: Stack Underflow".to_string());
+                }
                 // Decrement stack pointer
                 self.sp -= 1;
                 // Pop address from stack into program counter
@@ -136,6 +148,11 @@ impl Cpu {
             // Call (branch) Instruction
             0x2 => {
                 let address = Self::immediate_12bit_data(opcode);
+
+                if self.sp >= self.stack.len() as u8 {
+                    return Err("0x2NNN: Stack Overflow".to_string());
+                }
+
                 // First store current program counter address into stack
                 self.stack[self.sp as usize] = self.pc;
                 // Increment stack pointer
@@ -164,7 +181,7 @@ impl Cpu {
             // Conditional if register_x == register_y then skip instruction
             0x5 => {
                 if (opcode & 0x000F) != 0 {
-                    return Ok(());
+                    return Err("0x5XYN: Unsupported".to_string());
                 }
                 let register_x = Self::register_index(opcode);
                 let register_y = Self::second_register_index(opcode);
@@ -186,11 +203,11 @@ impl Cpu {
                 self.registers[register] = self.registers[register].wrapping_add(byte)
             }
             // Logical Operations and Arithmetic Instructions
-            0x8 => Self::logic_and_arithmetic_functions(self, opcode),
+            0x8 => Self::logic_and_arithmetic_functions(self, opcode)?,
             // Conditional if register_x != register_y then skip instruction
             0x9 => {
                 if (opcode & 0x000F) != 0 {
-                    return Ok(());
+                    return Err("0x9XYN: Unsupported".to_string());
                 }
                 let register_x = Self::register_index(opcode);
                 let register_y = Self::second_register_index(opcode);
@@ -243,10 +260,10 @@ impl Cpu {
                 };
             }
             // Input instructions
-            0xE => self.keyboard_functions(opcode),
+            0xE => self.keyboard_functions(opcode)?,
             // Timer/Utility related instructions
             0xF => self.timer_and_utility_functions(opcode)?,
-            _ => (),
+            _ => return Err("Execute: Unsupported Instruction".to_string()),
         }
 
         Ok(())
@@ -340,13 +357,13 @@ impl Cpu {
                     self.registers[index] = self.memory[self.i as usize + index];
                 }
             }
-            _ => (),
+            _ => return Err("0xFXNN: Unsupported".to_string()),
         }
 
         Ok(())
     }
 
-    fn keyboard_functions(&mut self, opcode: u16) {
+    fn keyboard_functions(&mut self, opcode: u16) -> Result<(), String> {
         let function = opcode & 0x00FF;
 
         match function {
@@ -362,11 +379,13 @@ impl Cpu {
                     self.pc += 2;
                 }
             }
-            _ => (),
+            _ => return Err("0xEXNN: Unsupported".to_string()),
         }
+
+        Ok(())
     }
 
-    fn logic_and_arithmetic_functions(&mut self, opcode: u16) {
+    fn logic_and_arithmetic_functions(&mut self, opcode: u16) -> Result<(), String> {
         let function = opcode & 0x000F;
 
         match function {
@@ -445,13 +464,15 @@ impl Cpu {
                 self.registers[0xF] = (self.registers[register_x] & 0x80) >> 7;
                 self.registers[register_x] <<= 1;
             }
-            _ => (),
+            _ => return Err("0x8XYN: Unsupported".to_string()),
         }
+
+        Ok(())
     }
 
-    fn cycle(&mut self) {
-        let opcode = self.fetch();
-        self.execute(opcode);
+    fn cycle(&mut self) -> Result<(), String> {
+        let opcode = self.fetch()?;
+        self.execute(opcode)
     }
 
     fn timer_tick(&mut self) {
@@ -477,7 +498,7 @@ mod tests {
 
         let opcode = cpu.fetch();
 
-        assert_eq!(opcode, 0x600A);
+        assert_eq!(opcode, Ok(0x600A));
         assert_eq!(cpu.pc, 0x202);
     }
 
@@ -496,7 +517,7 @@ mod tests {
     fn load_immediate_into_register() {
         let mut cpu = Cpu::new();
 
-        cpu.execute(0x6A42);
+        cpu.execute(0x6A42).unwrap();
 
         assert_eq!(cpu.registers[10], 0x42);
     }
@@ -505,8 +526,8 @@ mod tests {
     fn add_immediate_into_register() {
         let mut cpu = Cpu::new();
 
-        cpu.execute(0x7A03);
-        cpu.execute(0x7A07);
+        cpu.execute(0x7A03).unwrap();
+        cpu.execute(0x7A07).unwrap();
 
         assert_eq!(cpu.registers[10], 0xA);
     }
@@ -515,8 +536,8 @@ mod tests {
     fn add_immediate_into_register_overflow() {
         let mut cpu = Cpu::new();
 
-        cpu.execute(0x7AFF);
-        cpu.execute(0x7A07);
+        cpu.execute(0x7AFF).unwrap();
+        cpu.execute(0x7A07).unwrap();
 
         assert_eq!(cpu.registers[10], 0x6);
     }
@@ -528,7 +549,7 @@ mod tests {
         cpu.memory[0x200] = 0x6A;
         cpu.memory[0x201] = 0x42;
 
-        cpu.cycle();
+        cpu.cycle().unwrap();
 
         assert_eq!(cpu.registers[10], 0x42);
         assert_eq!(cpu.pc, 0x202);
@@ -572,10 +593,10 @@ mod tests {
     fn execute_small_program() {
         let mut cpu = Cpu::new();
 
-        cpu.load_program(&[0x6A, 0x42, 0x7A, 0x05]);
+        cpu.load_program(&[0x6A, 0x42, 0x7A, 0x05]).unwrap();
 
-        cpu.cycle();
-        cpu.cycle();
+        cpu.cycle().unwrap();
+        cpu.cycle().unwrap();
 
         assert_eq!(cpu.registers[10], 0x47);
         assert_eq!(cpu.pc, 0x204);
@@ -585,9 +606,10 @@ mod tests {
     fn call_address() {
         let mut cpu = Cpu::new();
 
-        cpu.load_program(&[0x22, 0x04, 0x7A, 0x05, 0x6A, 0x42]);
+        cpu.load_program(&[0x22, 0x04, 0x7A, 0x05, 0x6A, 0x42])
+            .unwrap();
 
-        cpu.cycle();
+        cpu.cycle().unwrap();
 
         assert_eq!(cpu.stack[0], 0x202);
         assert_eq!(cpu.sp, 1);
@@ -598,19 +620,20 @@ mod tests {
     fn call_address_and_return() {
         let mut cpu = Cpu::new();
 
-        cpu.load_program(&[0x22, 0x04, 0x6A, 0x42, 0x7A, 0x05, 0x00, 0xEE]);
+        cpu.load_program(&[0x22, 0x04, 0x6A, 0x42, 0x7A, 0x05, 0x00, 0xEE])
+            .unwrap();
 
         // The following program should initially add 0x5 into Register 10
         // But since the return brings it back to an immediate load, the final
         // result should be a 0x42 not a 0x47.
         // 0x204
-        cpu.cycle();
+        cpu.cycle().unwrap();
         // 0x206
-        cpu.cycle();
+        cpu.cycle().unwrap();
         // 0x202
-        cpu.cycle();
+        cpu.cycle().unwrap();
         //0x204
-        cpu.cycle();
+        cpu.cycle().unwrap();
 
         assert_eq!(cpu.registers[10], 0x42);
         assert_eq!(cpu.sp, 0);
@@ -621,16 +644,17 @@ mod tests {
     fn conditional_execution_if_equal_skip() {
         let mut cpu = Cpu::new();
 
-        cpu.load_program(&[0x6A, 0x42, 0x3A, 0x42, 0x6A, 0x45, 0x3A, 0x45]);
+        cpu.load_program(&[0x6A, 0x42, 0x3A, 0x42, 0x6A, 0x45, 0x3A, 0x45])
+            .unwrap();
 
-        cpu.cycle();
-        cpu.cycle();
+        cpu.cycle().unwrap();
+        cpu.cycle().unwrap();
 
         assert_eq!(cpu.pc, 0x206);
 
         // If not equal does not skip
 
-        cpu.cycle();
+        cpu.cycle().unwrap();
 
         assert_eq!(cpu.registers[10], 0x42);
         assert_eq!(cpu.pc, 0x208);
@@ -640,17 +664,18 @@ mod tests {
     fn conditional_execution_if_not_equal_skip() {
         let mut cpu = Cpu::new();
 
-        cpu.load_program(&[0x6A, 0x42, 0x4A, 0x42, 0x6A, 0x45, 0x4A, 0x47]);
+        cpu.load_program(&[0x6A, 0x42, 0x4A, 0x42, 0x6A, 0x45, 0x4A, 0x47])
+            .unwrap();
 
-        cpu.cycle();
-        cpu.cycle();
+        cpu.cycle().unwrap();
+        cpu.cycle().unwrap();
 
         assert_eq!(cpu.pc, 0x204);
 
         // If not equal does skip
 
-        cpu.cycle();
-        cpu.cycle();
+        cpu.cycle().unwrap();
+        cpu.cycle().unwrap();
 
         assert_eq!(cpu.registers[10], 0x45);
         assert_eq!(cpu.pc, 0x20A);
@@ -662,23 +687,24 @@ mod tests {
 
         cpu.load_program(&[
             0x6A, 0x42, 0x6B, 0x42, 0x5A, 0xB0, 0x69, 0x40, 0x6A, 0x45, 0x5A, 0xB0, 0x6B, 0x32,
-        ]);
+        ])
+        .unwrap();
 
         // Load 42 in registers A and B
-        cpu.cycle();
-        cpu.cycle();
+        cpu.cycle().unwrap();
+        cpu.cycle().unwrap();
 
         // Execute conditional register execution should skip to 0x6A, 0x45
-        cpu.cycle();
+        cpu.cycle().unwrap();
 
         assert_eq!(cpu.pc, 0x208);
 
         // Move 45 into register A then compare register A (45) and B (42)
-        cpu.cycle();
-        cpu.cycle();
+        cpu.cycle().unwrap();
+        cpu.cycle().unwrap();
 
         // Shouldn't skip so register B should have 32 loaded into it
-        cpu.cycle();
+        cpu.cycle().unwrap();
 
         assert_eq!(cpu.registers[11], 0x32);
         assert_eq!(cpu.pc, 0x20E);
@@ -690,24 +716,25 @@ mod tests {
 
         cpu.load_program(&[
             0x6A, 0x42, 0x6B, 0x42, 0x9A, 0xB0, 0x69, 0x40, 0x6A, 0x45, 0x9A, 0xB0, 0x6B, 0x32,
-        ]);
+        ])
+        .unwrap();
 
         // Load 42 in registers A and B
-        cpu.cycle();
-        cpu.cycle();
+        cpu.cycle().unwrap();
+        cpu.cycle().unwrap();
 
         // Execute conditional register execution should not  skip to 0x6A, 0x45
-        cpu.cycle();
+        cpu.cycle().unwrap();
 
         assert_eq!(cpu.pc, 0x206);
 
         // Then Register 9 holds the value of 40
         // and Register A holds 45 now
-        cpu.cycle();
-        cpu.cycle();
+        cpu.cycle().unwrap();
+        cpu.cycle().unwrap();
 
         // Execute conditional register execution, should skip so register B still has the value of 42.
-        cpu.cycle();
+        cpu.cycle().unwrap();
 
         assert_eq!(cpu.registers[9], 0x40);
         assert_eq!(cpu.registers[11], 0x42);
@@ -719,22 +746,22 @@ mod tests {
         let mut cpu = Cpu::new();
 
         // 200 into register A
-        cpu.execute(0x6AC8);
+        cpu.execute(0x6AC8).unwrap();
         // 100 into register B
-        cpu.execute(0x6B64);
+        cpu.execute(0x6B64).unwrap();
         // Add reg A and B
-        cpu.execute(0x8AB4);
+        cpu.execute(0x8AB4).unwrap();
 
         // Result should be 44 and carry
         assert_eq!(cpu.registers[0xF], 1);
         assert_eq!(cpu.registers[0xA], 44);
 
         // 100 into register A
-        cpu.execute(0x6A64);
+        cpu.execute(0x6A64).unwrap();
         // 50 into register B
-        cpu.execute(0x6B32);
+        cpu.execute(0x6B32).unwrap();
         // Add reg A and B
-        cpu.execute(0x8AB4);
+        cpu.execute(0x8AB4).unwrap();
 
         // Result should be 150 without carry
         assert_eq!(cpu.registers[0xF], 0);
@@ -746,22 +773,22 @@ mod tests {
         let mut cpu = Cpu::new();
 
         // 10 into register A
-        cpu.execute(0x6A0A);
+        cpu.execute(0x6A0A).unwrap();
         // 3 into register B
-        cpu.execute(0x6B03);
+        cpu.execute(0x6B03).unwrap();
         // Subtract reg a by reg b
-        cpu.execute(0x8AB5);
+        cpu.execute(0x8AB5).unwrap();
 
         // Result should be 7 and flag is set
         assert_eq!(cpu.registers[0xF], 1);
         assert_eq!(cpu.registers[0xA], 7);
 
         // 3 into register A
-        cpu.execute(0x6A03);
+        cpu.execute(0x6A03).unwrap();
         // 10 into register B
-        cpu.execute(0x6B0A);
+        cpu.execute(0x6B0A).unwrap();
         // Subtract reg a by reg b
-        cpu.execute(0x8AB5);
+        cpu.execute(0x8AB5).unwrap();
 
         // Result should be 249 and flag is cleared
         assert_eq!(cpu.registers[0xF], 0);
@@ -773,22 +800,22 @@ mod tests {
         let mut cpu = Cpu::new();
 
         // 10 into register A
-        cpu.execute(0x6A0A);
+        cpu.execute(0x6A0A).unwrap();
         // 3 into register B
-        cpu.execute(0x6B03);
+        cpu.execute(0x6B03).unwrap();
         // Subtract reg B by A
-        cpu.execute(0x8AB7);
+        cpu.execute(0x8AB7).unwrap();
 
         // Result should be 249 and flag is cleared
         assert_eq!(cpu.registers[0xF], 0);
         assert_eq!(cpu.registers[0xA], 249);
 
         // 3 into register A
-        cpu.execute(0x6A03);
+        cpu.execute(0x6A03).unwrap();
         // 10 into register B
-        cpu.execute(0x6B0A);
+        cpu.execute(0x6B0A).unwrap();
         // Subtract reg B by A
-        cpu.execute(0x8AB7);
+        cpu.execute(0x8AB7).unwrap();
 
         // Result should be 7 and flag is set
         assert_eq!(cpu.registers[0xF], 1);
@@ -800,17 +827,17 @@ mod tests {
         let mut cpu = Cpu::new();
 
         // Load 1011_0111 into reg A
-        cpu.execute(0x6AB7);
+        cpu.execute(0x6AB7).unwrap();
         // Load 1011_0110 into reg B
-        cpu.execute(0x6BB6);
+        cpu.execute(0x6BB6).unwrap();
 
         // Shift A right by 1
-        cpu.execute(0x8AB6);
+        cpu.execute(0x8AB6).unwrap();
         assert_eq!(cpu.registers[0xA], 0x5B);
         assert_eq!(cpu.registers[0xF], 1);
 
         // Shift B right by 1
-        cpu.execute(0x8BA6);
+        cpu.execute(0x8BA6).unwrap();
         assert_eq!(cpu.registers[0xB], 0x5B);
         assert_eq!(cpu.registers[0xF], 0);
     }
@@ -820,17 +847,17 @@ mod tests {
         let mut cpu = Cpu::new();
 
         // Load 1011_0111 into reg A
-        cpu.execute(0x6AB7);
+        cpu.execute(0x6AB7).unwrap();
         // Load 0011_0110 into reg B
-        cpu.execute(0x6B37);
+        cpu.execute(0x6B37).unwrap();
 
         // Shift A left by 1
-        cpu.execute(0x8ABE);
+        cpu.execute(0x8ABE).unwrap();
         assert_eq!(cpu.registers[0xA], 0x6E);
         assert_eq!(cpu.registers[0xF], 1);
 
         // Shift B left by 1
-        cpu.execute(0x8BAE);
+        cpu.execute(0x8BAE).unwrap();
         assert_eq!(cpu.registers[0xB], 0x6E);
         assert_eq!(cpu.registers[0xF], 0);
     }
@@ -839,7 +866,7 @@ mod tests {
     fn load_immediate_into_i() {
         let mut cpu = Cpu::new();
 
-        cpu.execute(0xA300);
+        cpu.execute(0xA300).unwrap();
 
         assert_eq!(cpu.i, 0x300);
     }
@@ -853,8 +880,8 @@ mod tests {
         cpu.memory[0x300] = 0x6A;
         cpu.memory[0x301] = 0x42;
 
-        cpu.cycle();
-        cpu.cycle();
+        cpu.cycle().unwrap();
+        cpu.cycle().unwrap();
 
         assert_eq!(cpu.registers[0xA], 0x42);
         assert_eq!(cpu.pc, 0x302);
@@ -873,8 +900,8 @@ mod tests {
         cpu.memory[0x310] = 0x6A;
         cpu.memory[0x311] = 0x40;
 
-        cpu.cycle();
-        cpu.cycle();
+        cpu.cycle().unwrap();
+        cpu.cycle().unwrap();
 
         assert_eq!(cpu.registers[0xA], 0x40);
         assert_eq!(cpu.pc, 0x312);
@@ -885,7 +912,7 @@ mod tests {
     fn random_and_with_immediate() {
         let mut cpu = Cpu::new();
 
-        cpu.execute(0xCAF0);
+        cpu.execute(0xCAF0).unwrap();
 
         assert_eq!(cpu.registers[0xA] & 0x0F, 0);
     }
@@ -907,7 +934,7 @@ mod tests {
         cpu.registers[0xB] = 0x5;
 
         // Draw the sprite data
-        cpu.execute(0xDAB3);
+        cpu.execute(0xDAB3).unwrap();
 
         assert!(cpu.display.get_pixel(9, 5));
         assert!(cpu.display.get_pixel(11, 5));
@@ -919,7 +946,7 @@ mod tests {
         assert_eq!(cpu.registers[0xF], 0);
 
         // Erase sprite data
-        cpu.execute(0xDAB3);
+        cpu.execute(0xDAB3).unwrap();
 
         assert!(!cpu.display.get_pixel(9, 5));
         assert!(!cpu.display.get_pixel(11, 5));
@@ -942,7 +969,7 @@ mod tests {
         cpu.registers[0xA] = 0x8;
         cpu.registers[0xB] = 0x5;
 
-        cpu.execute(0xDAB1);
+        cpu.execute(0xDAB1).unwrap();
 
         assert!(cpu.display.get_pixel(9, 5));
         assert!(cpu.display.get_pixel(11, 5));
@@ -968,11 +995,11 @@ mod tests {
         cpu.registers[0xA] = 0x8;
         cpu.registers[0xB] = 0x5;
 
-        cpu.execute(0xDAB3);
+        cpu.execute(0xDAB3).unwrap();
         assert!(cpu.display.get_pixel(9, 5));
         assert!(cpu.display.get_pixel(11, 5));
 
-        cpu.execute(0x00E0);
+        cpu.execute(0x00E0).unwrap();
         assert!(!cpu.display.get_pixel(9, 5));
         assert!(!cpu.display.get_pixel(11, 5));
     }
@@ -988,23 +1015,24 @@ mod tests {
 
         cpu.load_program(&[
             0x6A, 0x42, 0x6B, 0x42, 0xE0, 0x9E, 0x69, 0x40, 0x6A, 0x45, 0xE0, 0xA1, 0x6B, 0x32,
-        ]);
+        ])
+        .unwrap();
 
         // Load 42 in registers A and B
-        cpu.cycle();
-        cpu.cycle();
+        cpu.cycle().unwrap();
+        cpu.cycle().unwrap();
 
         // Execute conditional register execution should skip to 0x6A, 0x45
-        cpu.cycle();
+        cpu.cycle().unwrap();
 
         assert_eq!(cpu.pc, 0x208);
 
         // Move 45 into register A then compare register A (45) and B (42)
-        cpu.cycle();
-        cpu.cycle();
+        cpu.cycle().unwrap();
+        cpu.cycle().unwrap();
 
         // Shouldn't skip so register B should have 32 loaded into it
-        cpu.cycle();
+        cpu.cycle().unwrap();
 
         assert_eq!(cpu.registers[11], 0x32);
         assert_eq!(cpu.pc, 0x20E);
@@ -1016,7 +1044,7 @@ mod tests {
 
         cpu.delay_timer = 120;
 
-        cpu.execute(0xF207);
+        cpu.execute(0xF207).unwrap();
 
         assert_eq!(cpu.registers[0x2], 120);
     }
@@ -1027,7 +1055,7 @@ mod tests {
 
         cpu.registers[0x2] = 120;
 
-        cpu.execute(0xF215);
+        cpu.execute(0xF215).unwrap();
 
         assert_eq!(cpu.delay_timer, 120);
     }
@@ -1038,7 +1066,7 @@ mod tests {
 
         cpu.registers[0x2] = 120;
 
-        cpu.execute(0xF218);
+        cpu.execute(0xF218).unwrap();
 
         assert_eq!(cpu.sound_timer, 120);
     }
@@ -1050,14 +1078,14 @@ mod tests {
         cpu.registers[0x2] = 0x20;
         cpu.i = 0x300;
 
-        cpu.execute(0xF21E);
+        cpu.execute(0xF21E).unwrap();
 
         assert_eq!(cpu.i, 0x320);
 
         cpu.registers[0x2] = 0x1;
         cpu.i = 0xFFFF;
 
-        cpu.execute(0xF21E);
+        cpu.execute(0xF21E).unwrap();
 
         assert_eq!(cpu.i, 0);
     }
@@ -1067,7 +1095,7 @@ mod tests {
         let mut cpu = Cpu::new();
 
         cpu.registers[0x3] = 0xF;
-        cpu.execute(0xF329);
+        cpu.execute(0xF329).unwrap();
 
         assert_eq!(cpu.i, 0x9B);
     }
@@ -1077,14 +1105,14 @@ mod tests {
         let mut cpu = Cpu::new();
 
         cpu.registers[0x3] = 0xF;
-        cpu.load_program(&[0xF3, 0x0A]);
-        cpu.cycle();
+        cpu.load_program(&[0xF3, 0x0A]).unwrap();
+        cpu.cycle().unwrap();
 
         assert_eq!(cpu.pc, 0x200);
         assert_eq!(cpu.registers[0x3], 0xF);
 
         cpu.keypad.set_key(0xA, true);
-        cpu.cycle();
+        cpu.cycle().unwrap();
 
         assert_eq!(cpu.pc, 0x202);
         assert_eq!(cpu.registers[0x3], 0xA);
@@ -1097,7 +1125,7 @@ mod tests {
         cpu.registers[0x3] = 172;
         cpu.i = 0x300;
 
-        cpu.execute(0xF333);
+        cpu.execute(0xF333).unwrap();
 
         assert_eq!(cpu.memory[0x300], 1);
         assert_eq!(cpu.memory[0x301], 7);
@@ -1123,7 +1151,7 @@ mod tests {
         cpu.registers[2] = 0x56;
         cpu.i = 0x300;
 
-        cpu.execute(0xF255);
+        cpu.execute(0xF255).unwrap();
 
         assert_eq!(cpu.memory[cpu.i as usize], 0x12);
         assert_eq!(cpu.memory[cpu.i as usize + 1], 0x34);
@@ -1148,7 +1176,7 @@ mod tests {
         cpu.memory[0x301] = 0x34;
         cpu.memory[0x302] = 0x56;
 
-        cpu.execute(0xF265);
+        cpu.execute(0xF265).unwrap();
 
         assert_eq!(cpu.registers[0], 0x12);
         assert_eq!(cpu.registers[1], 0x34);
@@ -1194,5 +1222,75 @@ mod tests {
 
         assert_eq!(cpu.delay_timer, 0);
         assert_eq!(cpu.sound_timer, 0);
+    }
+
+    #[test]
+    fn stack_overflow() {
+        let mut cpu = Cpu::new();
+
+        for i in 0..16 {
+            cpu.execute(0x2220 + i).unwrap();
+        }
+
+        let result = cpu.execute(0x2300);
+
+        assert_eq!(result.unwrap_err(), "0x2NNN: Stack Overflow".to_string());
+    }
+
+    #[test]
+    fn stack_underflow() {
+        let mut cpu = Cpu::new();
+
+        let result = cpu.execute(0x00EE);
+
+        assert_eq!(result.unwrap_err(), "0x00EE: Stack Underflow".to_string());
+    }
+
+    #[test]
+    fn fetch_at_memory_bounds() {
+        let mut cpu = Cpu::new();
+
+        cpu.pc = 0xFFE;
+
+        let _ = cpu.cycle();
+
+        assert_eq!(cpu.pc, 0x1000);
+
+        cpu.pc = 0xFFF;
+
+        let result = cpu.cycle();
+
+        assert_eq!(
+            result.unwrap_err(),
+            "Out of bounds memory fetch!".to_string()
+        );
+
+        assert_eq!(cpu.pc, 0xFFF);
+    }
+
+    #[test]
+    fn unknown_instructions() {
+        let mut cpu = Cpu::new();
+
+        let result = cpu.execute(0xFFFF);
+        assert_eq!(result.unwrap_err(), "0xFXNN: Unsupported".to_string());
+
+        let result = cpu.execute(0x5ABF);
+        assert_eq!(result.unwrap_err(), "0x5XYN: Unsupported".to_string());
+
+        let result = cpu.execute(0x8ABF);
+        assert_eq!(result.unwrap_err(), "0x8XYN: Unsupported".to_string());
+
+        let result = cpu.execute(0xEABF);
+        assert_eq!(result.unwrap_err(), "0xEXNN: Unsupported".to_string());
+
+        let result = cpu.execute(0xFABF);
+        assert_eq!(result.unwrap_err(), "0xFXNN: Unsupported".to_string());
+
+        let result = cpu.execute(0x0000);
+        assert_eq!(
+            result.unwrap_err(),
+            "Execute: Unsupported Instruction".to_string()
+        );
     }
 }
