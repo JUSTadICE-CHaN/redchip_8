@@ -1,7 +1,15 @@
 mod display;
+mod emulator;
 mod keypad;
+mod scheduler;
+use std::{
+    thread::sleep,
+    time::{Duration, Instant},
+};
+
 use display::Display;
 use keypad::Keypad;
+use scheduler::Scheduler;
 
 const FONTSET: [u8; 80] = [
     0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
@@ -482,6 +490,77 @@ impl Cpu {
 
         if self.sound_timer > 0 {
             self.sound_timer -= 1;
+        }
+    }
+
+    pub fn run_cpu<S, P>(
+        &mut self,
+        freq: u16,
+        mut should_stop: S,
+        mut is_paused: P,
+    ) -> Result<(), String>
+    where
+        S: FnMut() -> bool,
+        P: FnMut() -> bool,
+    {
+        if freq == 0 {
+            return Err("CPU frequency must be greater than zero".into());
+        }
+
+        let instruction_period = Duration::from_secs_f64(1.0 / freq as f64);
+        let timer_period = Duration::from_secs_f64(1.0 / 60.0);
+
+        let start = Instant::now();
+        let mut next_instruction = start;
+        let mut next_timer_tick = start + timer_period;
+        let mut paused_since: Option<Instant> = None;
+
+        loop {
+            if should_stop() {
+                return Ok(());
+            }
+
+            let now = Instant::now();
+
+            if is_paused() {
+                if paused_since.is_none() {
+                    // Freeze any time remaining at the moment we noticed the pause.
+                    // If a deadline was already overdue, make it due now rather than
+                    // carrying a backlog into the resumed session.
+                    next_instruction = next_instruction.max(now);
+                    next_timer_tick = next_timer_tick.max(now);
+                    paused_since = Some(now);
+                }
+
+                // Keep the scheduler alive, but don't execute instructions or ticks.
+                sleep(Duration::from_millis(5));
+                continue;
+            }
+
+            if let Some(pause_start) = paused_since.take() {
+                // Move both deadlines forward by the paused wall-clock time.
+                // Their remaining time is preserved, while logical time was frozen.
+                let paused_duration = now.duration_since(pause_start);
+                next_instruction += paused_duration;
+                next_timer_tick += paused_duration;
+            }
+
+            // Process the earliest due event first, preserving event order.
+            if next_instruction <= now || next_timer_tick <= now {
+                if next_instruction <= next_timer_tick {
+                    self.cycle()?;
+                    next_instruction += instruction_period;
+                } else {
+                    self.timer_tick();
+                    next_timer_tick += timer_period;
+                }
+
+                continue;
+            }
+
+            // Sleep until the next event is due.
+            let next_deadline = next_instruction.min(next_timer_tick);
+            sleep(next_deadline.saturating_duration_since(now));
         }
     }
 }
