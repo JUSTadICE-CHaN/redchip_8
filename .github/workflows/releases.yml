@@ -58,6 +58,9 @@ jobs:
             libwayland-dev \
             libxkbcommon-dev \
             wayland-protocols
+      
+          pkg-config --modversion wayland-client
+
 
       - name: Install Rust target
         run: rustup target add ${{ matrix.target }}
