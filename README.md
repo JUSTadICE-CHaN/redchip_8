@@ -1,10 +1,6 @@
 # RCHIP — CHIP-8 Emulator
 
 <p align="center">
-  <img src="assets/banner.png" alt="RCHIP Banner" width="800">
-</p>
-
-<p align="center">
   <strong>A CHIP-8 emulator written in Rust, featuring a graphical interface and real-time CPU state inspection.</strong>
 </p>
 
