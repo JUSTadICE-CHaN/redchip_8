@@ -1,4 +1,4 @@
-<p align="center"> # RCHIP — CHIP-8 Emulator </p>
+<p align="center"> *RCHIP — CHIP-8 Emulator* </p>
 
 <p align="center">
   <strong>A CHIP-8 emulator written in Rust, featuring a graphical interface and real-time CPU state inspection.</strong>
