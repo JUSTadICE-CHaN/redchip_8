@@ -19,7 +19,7 @@ RCHIP is an implementation of the CHIP-8 virtual machine, written in Rust.
 
 The project aims to explore low-level computer architecture and systems programming through the implementation of a virtual processor, its instruction set, memory, timers, display and input handling.
 
-It includes a graphical frontend built with [Macroquad](https://github.com/not-fl3/macroquad) and [Ply](https://github.com/...). The interface provides real-time access to CPU state alongside a playable CHIP-8 display.
+It includes a graphical frontend built with [Macroquad](https://github.com/not-fl3/macroquad) and [Ply](https://github.com/TheRedDeveloper/ply-engine). The interface provides real-time access to CPU state alongside a playable CHIP-8 display.
 
 ## Features
 
