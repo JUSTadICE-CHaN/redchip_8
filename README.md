@@ -8,7 +8,7 @@
   <img src="https://img.shields.io/badge/Rust-Systems%20Programming-orange?logo=rust" alt="Rust">
   <img src="https://img.shields.io/badge/Architecture-CHIP--8-blueviolet" alt="CHIP-8">
   <img src="https://img.shields.io/badge/Status-Complete-green" alt="Status">
-  <img src="https://img.shields.io/github/license/JUSTadICE-CHaN/rchip" alt="License">
+  <img src="https://img.shields.io/github/license/JUSTadICE-CHaN/redchip_8" alt="License">
 </p>
 
 ---
