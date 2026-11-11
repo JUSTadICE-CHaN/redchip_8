@@ -35,10 +35,6 @@ It includes a graphical frontend built with [Macroquad](https://github.com/not-f
 
 ## Interface
 
-<p align="center">
-  <img src="assets/screenshot.png" alt="RCHIP emulator interface" width="800">
-</p>
-
 The interface provides:
 
 | Panel | Information |
