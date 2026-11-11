@@ -491,8 +491,15 @@ impl Cpu {
     }
 
     fn cycle(&mut self) -> Result<(), String> {
+        let instruction_address = self.pc;
         let opcode = self.fetch()?;
-        self.execute(opcode)
+
+        self.execute(opcode).map_err(|error| {
+            format!(
+                "Execution error at 0x{:03X} (opcode 0x{:04X}): {}",
+                instruction_address, opcode, error
+            )
+        })
     }
 
     fn timer_tick(&mut self) {
