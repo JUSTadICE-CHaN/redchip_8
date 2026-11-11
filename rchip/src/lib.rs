@@ -1,7 +1,11 @@
 mod display;
 mod emulator;
 mod keypad;
+mod runtime;
 mod scheduler;
+
+pub use emulator::Emulator;
+
 use std::{
     thread::sleep,
     time::{Duration, Instant},
@@ -85,6 +89,14 @@ impl Cpu {
         self.memory[program_start..(program_start + program.len())].clone_from_slice(program);
 
         Ok(())
+    }
+
+    pub fn display(&self) -> &Display {
+        &self.display
+    }
+
+    pub fn registers(&self) -> &[u8; 16] {
+        &self.registers
     }
 
     fn fetch(&mut self) -> Result<u16, String> {

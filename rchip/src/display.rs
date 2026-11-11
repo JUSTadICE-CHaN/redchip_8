@@ -13,10 +13,13 @@ impl Display {
         self.pixels = [false; 64 * 32];
     }
 
-    pub fn get_pixel(&mut self, x: usize, y: usize) -> bool {
+    pub fn get_pixel(&self, x: usize, y: usize) -> bool {
         let index = (y % 32) * 64 + (x % 64);
-        let pixel_status = self.pixels[index];
-        pixel_status
+        self.pixels[index]
+    }
+
+    pub fn pixels(&self) -> &[bool; 2048] {
+        &self.pixels
     }
 
     fn toggle_pixel(&mut self, x: usize, y: usize) -> bool {
