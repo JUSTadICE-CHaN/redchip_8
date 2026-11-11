@@ -1,0 +1,9 @@
+[package]
+name = "rchip_frontend"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ply-engine = { version = "1.1", features = ["built-in-shaders", "audio"] }
+rchip = { path = "../rchip" }
+rfd = "0.15"
