@@ -54,7 +54,10 @@ jobs:
             libx11-dev \
             libxi-dev \
             libgl1-mesa-dev \
-            libasound2-dev
+            libasound2-dev \
+            libwayland-dev \
+            libxkbcommon-dev \
+            wayland-protocols
 
       - name: Install Rust target
         run: rustup target add ${{ matrix.target }}
